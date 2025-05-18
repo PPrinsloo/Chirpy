@@ -4,8 +4,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
+
+type apiConfig struct {
+	fileserverHits atomic.Int32
+}
 
 // Middleware defines a function that wraps an http.Handler
 type Middleware func(http.Handler) http.Handler
@@ -35,12 +40,47 @@ func AddHeader(next http.Handler) http.Handler {
 	})
 }
 
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+func (cfg *apiConfig) metricsInc(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg.fileserverHits.Add(1)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (cfg *apiConfig) checkMetrics(w http.ResponseWriter, _ *http.Request) {
+	hitCount := cfg.fileserverHits.Load()
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "Hits: %d", hitCount)
+}
+
+func (cfg *apiConfig) reset(w http.ResponseWriter, _ *http.Request) {
+	cfg.fileserverHits.Swap(0)
+	w.WriteHeader(http.StatusOK)
+}
+
+func routs(mux *http.ServeMux, cfg *apiConfig) {
+
+	fileServer := http.FileServer(http.Dir("."))
+	mux.Handle("/app/", Chain(fileServer, Logger, AddHeader, cfg.metricsInc))
+
+	mux.Handle("/healthz", Chain(http.HandlerFunc(healthCheckHandler), Logger, AddHeader))
+
+	mux.Handle("/metrics", Chain(http.HandlerFunc(cfg.checkMetrics), Logger, AddHeader))
+
+	mux.Handle("/reset", Chain(http.HandlerFunc(cfg.reset), Logger, AddHeader))
+}
+
 func main() {
 	mux := http.NewServeMux()
-	fileServer := http.FileServer(http.Dir("."))
+	cfg := &apiConfig{}
 
-	handler := Chain(fileServer, Logger, AddHeader)
-	mux.Handle("/", handler)
+	routs(mux, cfg)
 
 	fmt.Println("Server starting on :8080")
 	err := http.ListenAndServe(":8080", mux)
