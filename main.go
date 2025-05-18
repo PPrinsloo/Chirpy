@@ -67,13 +67,24 @@ func (cfg *apiConfig) reset(w http.ResponseWriter, _ *http.Request) {
 func routs(mux *http.ServeMux, cfg *apiConfig) {
 
 	fileServer := http.FileServer(http.Dir("."))
+	// For fileServer, we still need to use Handle since it's an http.Handler
 	mux.Handle("/app/", Chain(fileServer, Logger, AddHeader, cfg.metricsInc))
 
-	mux.Handle("/healthz", Chain(http.HandlerFunc(healthCheckHandler), Logger, AddHeader))
+	// Convert the other routes to use HandleFunc with middleware
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		handler := Chain(http.HandlerFunc(healthCheckHandler), Logger, AddHeader)
+		handler.ServeHTTP(w, r)
+	})
 
-	mux.Handle("/metrics", Chain(http.HandlerFunc(cfg.checkMetrics), Logger, AddHeader))
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		handler := Chain(http.HandlerFunc(cfg.checkMetrics), Logger, AddHeader)
+		handler.ServeHTTP(w, r)
+	})
 
-	mux.Handle("/reset", Chain(http.HandlerFunc(cfg.reset), Logger, AddHeader))
+	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
+		handler := Chain(http.HandlerFunc(cfg.reset), Logger, AddHeader)
+		handler.ServeHTTP(w, r)
+	})
 }
 
 func main() {
