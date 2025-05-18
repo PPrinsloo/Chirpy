@@ -1,0 +1,8 @@
+services:
+  chirpy:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # For development hot-reloading if needed
+      - ./:/app
